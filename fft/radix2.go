@@ -81,12 +81,13 @@ func radix2FFT(x []complex128) []complex128 {
 	lx := len(x)
 	factors := getRadix2Factors(lx)
 
-	t := make([]complex128, lx) // temp
+	t := getBuf(lx) // temp scratch buffer, fully overwritten every stage
 	r := reorderData(x)
 
 	var blocks, stage, s_2 int
 
-	jobs := make(chan *fft_work, lx)
+	// Work items are passed by value so no per-job heap allocation is needed.
+	jobs := make(chan fft_work, lx)
 	wg := sync.WaitGroup{}
 
 	num_workers := worker_pool_size
@@ -135,7 +136,7 @@ func radix2FFT(x []complex128) []complex128 {
 		for start, end := 0, stage; ; {
 			if end-start >= idx_diff || end == lx {
 				wg.Add(1)
-				jobs <- &fft_work{start, end}
+				jobs <- fft_work{start, end}
 
 				if end == lx {
 					break
@@ -150,6 +151,17 @@ func radix2FFT(x []complex128) []complex128 {
 		r, t = t, r
 	}
 
+	// r and t are swapped after each stage, so the final result lives in the
+	// pooled scratch buffer when the number of stages is odd. In that case
+	// move it into the freshly-allocated buffer: pooled memory must never
+	// escape to the caller.
+	if log2(uint(lx))%2 == 1 {
+		copy(t, r)
+		putBuf(r)
+		return t
+	}
+
+	putBuf(t)
 	return r
 }
 

@@ -67,15 +67,21 @@ func hasBluesteinFactors(idx int) bool {
 // bluesteinFFT returns the FFT calculated using the Bluestein algorithm.
 func bluesteinFFT(x []complex128) []complex128 {
 	lx := len(x)
-	a := dsputils.ZeroPad(x, dsputils.NextPowerOf2(lx*2-1))
-	la := len(a)
+	la := dsputils.NextPowerOf2(lx*2 - 1)
 	factors, invFactors := getBluesteinFactors(lx)
 
+	// a and b are scratch buffers; neither Convolve nor the FFTs it performs
+	// retain their inputs, so both are recycled below. Pooled buffers may
+	// hold stale data, so the portions not fully overwritten are zeroed to
+	// keep the result bit-identical to freshly-allocated buffers.
+	a := getBuf(la)
+	clear(a[lx:])
 	for n, v := range x {
 		a[n] = v * invFactors[n]
 	}
 
-	b := make([]complex128, la)
+	b := getBuf(la)
+	clear(b)
 	for i := 0; i < lx; i++ {
 		b[i] = factors[i]
 
@@ -85,6 +91,8 @@ func bluesteinFFT(x []complex128) []complex128 {
 	}
 
 	r := Convolve(a, b)
+	putBuf(a)
+	putBuf(b)
 
 	for i := 0; i < lx; i++ {
 		r[i] *= invFactors[i]

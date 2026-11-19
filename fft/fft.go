@@ -23,18 +23,32 @@ import (
 
 // FFTReal returns the forward FFT of the real-valued slice.
 func FFTReal(x []float64) []complex128 {
-	return FFT(dsputils.ToComplex(x))
+	buf := getBuf(len(x))
+	for n, v := range x {
+		buf[n] = complex(v, 0)
+	}
+
+	r := FFT(buf)
+	putBuf(buf)
+	return r
 }
 
 // IFFTReal returns the inverse FFT of the real-valued slice.
 func IFFTReal(x []float64) []complex128 {
-	return IFFT(dsputils.ToComplex(x))
+	buf := getBuf(len(x))
+	for n, v := range x {
+		buf[n] = complex(v, 0)
+	}
+
+	r := IFFT(buf)
+	putBuf(buf)
+	return r
 }
 
 // IFFT returns the inverse FFT of the complex-valued slice.
 func IFFT(x []complex128) []complex128 {
 	lx := len(x)
-	r := make([]complex128, lx)
+	r := getBuf(lx)
 
 	// Reverse inputs, which is calculated with modulo N, hence x[0] as an outlier
 	r[0] = x[0]
@@ -42,13 +56,14 @@ func IFFT(x []complex128) []complex128 {
 		r[i] = x[lx-i]
 	}
 
-	r = FFT(r)
+	out := FFT(r)
+	putBuf(r)
 
 	N := complex(float64(lx), 0)
-	for n := range r {
-		r[n] /= N
+	for n := range out {
+		out[n] /= N
 	}
-	return r
+	return out
 }
 
 // Convolve returns the convolution of x ∗ y.
@@ -60,12 +75,19 @@ func Convolve(x, y []complex128) []complex128 {
 	fft_x := FFT(x)
 	fft_y := FFT(y)
 
-	r := make([]complex128, len(x))
+	r := getBuf(len(x))
 	for i := 0; i < len(r); i++ {
 		r[i] = fft_x[i] * fft_y[i]
 	}
 
-	return IFFT(r)
+	// fft_x and fft_y are freshly allocated by FFT and referenced by nothing
+	// else, so they can be recycled as scratch buffers.
+	putBuf(fft_x)
+	putBuf(fft_y)
+
+	out := IFFT(r)
+	putBuf(r)
+	return out
 }
 
 // FFT returns the forward FFT of the complex-valued slice.
@@ -135,8 +157,10 @@ func computeFFT2(x [][]complex128, fftFunc func([]complex128) []complex128) [][]
 		r[i] = make([]complex128, cols)
 	}
 
+	// t is reused across columns; fftFunc does not retain its input and every
+	// element is overwritten before each use.
+	t := getBuf(rows)
 	for i := 0; i < cols; i++ {
-		t := make([]complex128, rows)
 		for j := 0; j < rows; j++ {
 			t[j] = x[j][i]
 		}
@@ -145,6 +169,7 @@ func computeFFT2(x [][]complex128, fftFunc func([]complex128) []complex128) [][]
 			r[n][i] = v
 		}
 	}
+	putBuf(t)
 
 	for n, v := range r {
 		r[n] = fftFunc(v)
@@ -172,13 +197,17 @@ func computeFFTN(m *dsputils.Matrix, fftFunc func([]complex128) []complex128) *d
 		dims[n] -= 1
 	}
 
+	d := make([]int, len(dims))
 	for n := range dims {
-		d := make([]int, len(dims))
 		copy(d, dims)
 		d[n] = -1
 
 		for {
-			r.SetDim(fftFunc(t.Dim(d)), d)
+			in := t.Dim(d)
+			out := fftFunc(in)
+			putBuf(in) // fftFunc does not retain its input
+			r.SetDim(out, d)
+			putBuf(out) // SetDim copies the values out, so out is dead here
 
 			if !decrDim(d, dims) {
 				break

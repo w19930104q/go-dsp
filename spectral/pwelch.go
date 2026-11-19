@@ -100,17 +100,46 @@ func Pwelch(x []float64, Fs float64, o *PwelchOptions) (Pxx, freqs []float64) {
 	lp := pad/2 + 1
 	var scale float64 = 2
 
-	segs := Segment(x, nfft, noverlap)
+	// wlen is the length of each segment after zero padding, matching
+	// ZeroPadF(seg, pad) for a segment of length nfft.
+	wlen := pad
+	if nfft > wlen {
+		wlen = nfft
+	}
+
+	// The window values depend only on the segment length, so compute them
+	// once instead of once per segment.
+	wvals := wf(wlen)
+
+	// Segment the input the same way Segment does, but without copying each
+	// segment: every segment is copied into a single reused scratch buffer
+	// below. This keeps allocation bounded for long signals.
+	stride := nfft - noverlap
+	var segs int
+	if len(x) == nfft {
+		segs = 1
+	} else if len(x) > nfft {
+		segs = (len(x)-nfft)/stride + 1
+	}
 
 	Pxx = make([]float64, lp)
-	for _, x := range segs {
-		x = dsputils.ZeroPadF(x, pad)
-		window.Apply(x, wf)
+	buf := make([]float64, wlen)
+	for i := 0; i < segs; i++ {
+		seg := x[i*stride : i*stride+nfft]
 
-		pgram := fft.FFTReal(x)
+		// Zero-pad the segment into the scratch buffer, clearing any stale
+		// data left over from the previous segment.
+		copy(buf, seg)
+		clear(buf[len(seg):])
+
+		for j, w := range wvals {
+			buf[j] *= w
+		}
+
+		pgram := fft.FFTReal(buf)
 
 		for j := range Pxx {
-			d := real(cmplx.Conj(pgram[j])*pgram[j]) / float64(len(segs))
+			d := real(cmplx.Conj(pgram[j])*pgram[j]) / float64(segs)
 
 			if j > 0 && j < lp-1 {
 				d *= scale
@@ -120,7 +149,10 @@ func Pwelch(x []float64, Fs float64, o *PwelchOptions) (Pxx, freqs []float64) {
 		}
 	}
 
-	w := wf(nfft)
+	w := wvals
+	if nfft != wlen {
+		w = wf(nfft)
+	}
 	var norm float64
 	for _, x := range w {
 		norm += x * x
