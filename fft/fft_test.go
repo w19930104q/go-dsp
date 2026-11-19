@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/cmplx"
+	"math/rand"
 	"testing"
 
 	"github.com/madelynnblue/go-dsp/dsputils"
@@ -243,6 +244,104 @@ func TestReverseBits(t *testing.T) {
 
 		if v != rt.out {
 			t.Error("reverse bits error\ninput:", rt.in, "\nsize:", rt.sz, "\noutput:", v, "\nexpected:", rt.out)
+		}
+	}
+}
+
+// naiveDFT returns the unnormalized discrete Fourier transform of x,
+// computed directly from the definition.
+func naiveDFT(x []complex128) []complex128 {
+	n := len(x)
+	r := make([]complex128, n)
+	for k := 0; k < n; k++ {
+		var s complex128
+		for j, v := range x {
+			s += v * cmplx.Exp(complex(0, -2*math.Pi*float64(j*k)/float64(n)))
+		}
+		r[k] = s
+	}
+	return r
+}
+
+func maxAbsDiff(a, b []complex128) float64 {
+	if len(a) != len(b) {
+		return math.Inf(1)
+	}
+	m := 0.0
+	for i := range a {
+		if d := cmplx.Abs(a[i] - b[i]); d > m {
+			m = d
+		}
+	}
+	return m
+}
+
+// TestFFTNormalization verifies that both algorithm paths (radix-2 for
+// power-of-2 lengths, Bluestein otherwise) compute the same unnormalized
+// forward DFT, matching the direct definition.
+func TestFFTNormalization(t *testing.T) {
+	lengths := []int{
+		2, 4, 8, 16, 32, 64, // radix-2 path
+		3, 5, 6, 7, 9, 10, 11, 12, 13, 15, 17, 31, 33, // bluestein path
+	}
+
+	rng := rand.New(rand.NewSource(1))
+	for _, n := range lengths {
+		x := make([]complex128, n)
+		for i := range x {
+			x[i] = complex(rng.NormFloat64(), rng.NormFloat64())
+		}
+
+		if err := maxAbsDiff(FFT(x), naiveDFT(x)); err > 1e-9 {
+			t.Errorf("FFT normalization error, length %d: max diff %g", n, err)
+		}
+	}
+}
+
+// TestRoundTrip verifies that a forward/inverse round trip restores the
+// original values for every length on both algorithm paths.
+func TestRoundTrip(t *testing.T) {
+	lengths := []int{0, 1}
+	for n := 2; n <= 130; n++ {
+		lengths = append(lengths, n)
+	}
+	lengths = append(lengths, 256, 500, 512, 1000, 1024, 4093, 4096)
+
+	rng := rand.New(rand.NewSource(1))
+	for _, n := range lengths {
+		x := make([]complex128, n)
+		for i := range x {
+			x[i] = complex(rng.NormFloat64(), rng.NormFloat64())
+		}
+
+		if err := maxAbsDiff(IFFT(FFT(x)), x); err > 1e-8 {
+			t.Errorf("IFFT(FFT(x)) round trip error, length %d: max diff %g", n, err)
+		}
+
+		if err := maxAbsDiff(FFT(IFFT(x)), x); err > 1e-8 {
+			t.Errorf("FFT(IFFT(x)) round trip error, length %d: max diff %g", n, err)
+		}
+	}
+}
+
+// TestRoundTrip2 verifies the 2-dimensional forward/inverse round trip.
+func TestRoundTrip2(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	for _, dims := range [][2]int{{1, 1}, {2, 3}, {3, 3}, {4, 5}, {5, 4}, {8, 8}, {7, 9}} {
+		rows, cols := dims[0], dims[1]
+		x := make([][]complex128, rows)
+		for i := range x {
+			x[i] = make([]complex128, cols)
+			for j := range x[i] {
+				x[i][j] = complex(rng.NormFloat64(), rng.NormFloat64())
+			}
+		}
+
+		xi := IFFT2(FFT2(x))
+		for i := range x {
+			if err := maxAbsDiff(xi[i], x[i]); err > 1e-8 {
+				t.Errorf("IFFT2(FFT2(x)) round trip error, size %dx%d: max diff %g", rows, cols, err)
+			}
 		}
 	}
 }

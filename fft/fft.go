@@ -22,18 +22,31 @@ import (
 )
 
 // FFTReal returns the forward FFT of the real-valued slice.
+// It uses the same normalization as FFT.
 func FFTReal(x []float64) []complex128 {
 	return FFT(dsputils.ToComplex(x))
 }
 
 // IFFTReal returns the inverse FFT of the real-valued slice.
+// It uses the same normalization as IFFT.
 func IFFTReal(x []float64) []complex128 {
 	return IFFT(dsputils.ToComplex(x))
 }
 
 // IFFT returns the inverse FFT of the complex-valued slice.
+//
+// The inverse transform is scaled by 1/N, making IFFT the exact inverse of
+// the unnormalized FFT: IFFT(FFT(x)) == x (within floating-point tolerance)
+// for inputs of any length.
 func IFFT(x []complex128) []complex128 {
 	lx := len(x)
+
+	if lx <= 1 {
+		r := make([]complex128, lx)
+		copy(r, x)
+		return r
+	}
+
 	r := make([]complex128, lx)
 
 	// Reverse inputs, which is calculated with modulo N, hence x[0] as an outlier
@@ -69,6 +82,12 @@ func Convolve(x, y []complex128) []complex128 {
 }
 
 // FFT returns the forward FFT of the complex-valued slice.
+//
+// The forward transform is unnormalized (no 1/N scaling); the 1/N factor is
+// applied by IFFT, so a forward/inverse round trip restores the original
+// values. Inputs whose length is a power of 2 are computed with the radix-2
+// algorithm and all other lengths with Bluestein's algorithm; both paths use
+// the same normalization, so results are consistent across all lengths.
 func FFT(x []complex128) []complex128 {
 	lx := len(x)
 
@@ -106,6 +125,7 @@ func FFT2Real(x [][]float64) [][]complex128 {
 }
 
 // FFT2 returns the 2-dimensional, forward FFT of the complex-valued matrix.
+// It uses the same normalization as FFT.
 func FFT2(x [][]complex128) [][]complex128 {
 	return computeFFT2(x, FFT)
 }
@@ -116,6 +136,7 @@ func IFFT2Real(x [][]float64) [][]complex128 {
 }
 
 // IFFT2 returns the 2-dimensional, inverse FFT of the complex-valued matrix.
+// It uses the same normalization as IFFT.
 func IFFT2(x [][]complex128) [][]complex128 {
 	return computeFFT2(x, IFFT)
 }
@@ -154,11 +175,13 @@ func computeFFT2(x [][]complex128, fftFunc func([]complex128) []complex128) [][]
 }
 
 // FFTN returns the forward FFT of the matrix m, computed in all N dimensions.
+// It uses the same normalization as FFT.
 func FFTN(m *dsputils.Matrix) *dsputils.Matrix {
 	return computeFFTN(m, FFT)
 }
 
-// IFFTN returns the forward FFT of the matrix m, computed in all N dimensions.
+// IFFTN returns the inverse FFT of the matrix m, computed in all N dimensions.
+// It uses the same normalization as IFFT.
 func IFFTN(m *dsputils.Matrix) *dsputils.Matrix {
 	return computeFFTN(m, IFFT)
 }
